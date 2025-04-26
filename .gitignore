@@ -10,3 +10,4 @@ test/dummy/.sass-cache
 Gemfile.lock
 .ruby-version
 .ruby-gemset
+/test/dummy/db/remote.sqlite3*

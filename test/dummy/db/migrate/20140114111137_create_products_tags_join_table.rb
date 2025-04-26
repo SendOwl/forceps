@@ -1,4 +1,4 @@
-class CreateProductsTagsJoinTable < ActiveRecord::Migration
+class CreateProductsTagsJoinTable < ActiveRecord::Migration[7.1]
   def change
     create_table :products_tags, id: false do |t|
       t.integer :product_id

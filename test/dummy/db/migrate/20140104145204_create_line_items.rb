@@ -1,4 +1,4 @@
-class CreateLineItems < ActiveRecord::Migration
+class CreateLineItems < ActiveRecord::Migration[7.1]
   def change
     create_table :line_items do |t|
       t.integer :quantity

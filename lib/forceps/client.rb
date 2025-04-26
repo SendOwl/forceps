@@ -34,7 +34,7 @@ module Forceps
     end
 
     def model_classes_to_exclude
-      if Rails::VERSION::MAJOR >= 4
+      if defined?(ActiveRecord::SchemaMigration)
         [ActiveRecord::SchemaMigration]
       else
         []
@@ -49,132 +49,87 @@ module Forceps
 
     def declare_remote_model_class(klass)
       full_class_name = klass.name
-      head = Forceps::Remote
-
-      path = full_class_name.split("::")
-      class_name = path.pop
-
-      path.each do |module_name|
-        if head.const_defined?(module_name, false)
-          head = head.const_get(module_name, false)
-        else
-          head = head.const_set(module_name, Module.new)
+      remote_class_name = full_class_name.demodulize
+      
+      remote_class = Class.new(klass) do
+        self.table_name = klass.table_name
+        
+        # Give the class a proper name in the Forceps::Remote namespace
+        def self.name
+          "Forceps::Remote::#{superclass.name.demodulize}"
         end
-      end
-
-      instance = build_new_remote_class(klass)
-      return unless instance
-
-      head.const_set(class_name, instance)
-
-      remote_class_for(full_class_name).establish_connection :remote
-    end
-
-    def build_new_remote_class(local_class)
-      needs_type_condition = (local_class.base_class != ActiveRecord::Base)
-
-      begin
-        needs_type_condition &&= local_class.finder_needs_type_condition?
-      rescue ActiveRecord::StatementInvalid => e
-        raise e unless e.cause.is_a?(PG::UndefinedTable)
-
-        # Prevent error caused by auto-generated framework models, e.g. ActionText::RichText.
-        puts "Ignoring model without table: #{local_class}"
-        @models_without_table << local_class
-        return nil
-      end
-
-      Class.new(local_class) do
-        self.table_name = local_class.table_name
 
         include Forceps::ActsAsCopyableModel
+        establish_connection :remote
 
-        # Intercept instantiation of records to make the 'type' column point to the corresponding remote class
-        if Rails::VERSION::MAJOR >= 4
-          def self.instantiate(record, column_types = {})
-            __make_sti_column_point_to_forceps_remote_class(record)
-            super
-          end
-        else
-          def self.instantiate(record)
-            __make_sti_column_point_to_forceps_remote_class(record)
-            super
-          end
-        end
-
-        def self.sti_name
-          name.gsub("Forceps::Remote::", "")
-        end
-
-        def self.__make_sti_column_point_to_forceps_remote_class(record)
-          if record[inheritance_column].present?
-            record[inheritance_column] = "Forceps::Remote::#{record[inheritance_column]}"
-          end
-        end
-
-        # We don't want to include STI condition automatically (the base class extends the original one)
-        unless needs_type_condition
-          def self.finder_needs_type_condition?
-            false
-          end
+        def self.finder_needs_type_condition?
+          true
         end
       end
-    end
 
-    def remote_class_for(full_class_name)
-      head = Forceps::Remote
-      full_class_name.split("::").each do |mod|
-        head = head.const_get(mod)
-      end
-      head
+      Forceps::Remote.const_set(remote_class_name, remote_class)
+      @models_with_table << klass
     end
 
     def make_associations_reference_remote_classes
-      @models_with_table = model_classes - @models_without_table
-      @models_with_table.each do |model_class|
-        make_associations_reference_remote_classes_for(model_class)
+      @models_with_table.each do |local_class|
+        make_associations_reference_remote_classes_for(local_class)
       end
     end
 
     def make_associations_reference_remote_classes_for(model_class)
-      model_class._reflections.values.each do |association|
-        next if association.class_name =~ /Forceps::Remote/ || association.class_name =~ /HABTM/ rescue next
+      model_class.reflect_on_all_associations.each do |association|
         reference_remote_class(model_class, association)
       end
     end
 
     def reference_remote_class(model_class, association)
-      remote_model_class = remote_class_for(model_class.name)
-
       if association.options[:polymorphic]
-        reference_remote_class_in_polymorphic_association(association, remote_model_class)
+        reference_remote_class_in_polymorphic_association(association, model_class)
       else
-        reference_remote_class_in_normal_association(association, remote_model_class)
+        reference_remote_class_in_normal_association(association, model_class)
       end
     end
 
     def reference_remote_class_in_polymorphic_association(association, remote_model_class)
-      foreign_type_attribute_name = association.foreign_type
-
-      remote_model_class.send(:define_method, association.foreign_type) do
-        "Forceps::Remote::#{super()}"
-      end
-
-      remote_model_class.send(:define_method, "[]") do |attribute_name|
-        if (attribute_name.to_s == foreign_type_attribute_name)
-          "Forceps::Remote::#{super(attribute_name)}"
-        else
-          super(attribute_name)
-        end
-      end
+      # No need to do anything. Polymorphic associations don't specify the target class.
     end
 
     def reference_remote_class_in_normal_association(association, remote_model_class)
-      related_remote_class = remote_class_for(association.klass.name)
+      related_local_class = association.klass
+      related_remote_class = Forceps::Remote.const_get(related_local_class.name.demodulize)
 
-      cloned_association = association.dup
-      cloned_association.instance_variable_set("@klass", related_remote_class)
-      ActiveRecord::Reflection.add_reflection(remote_model_class, cloned_association.name, cloned_association)
+      if association.is_a?(ActiveRecord::Reflection::ThroughReflection)
+        reference_remote_class_in_through_association(association, remote_model_class, related_remote_class)
+      else
+        reference_remote_class_in_direct_association(association, remote_model_class, related_remote_class)
+      end
+    end
+
+    def reference_remote_class_in_through_association(association, remote_model_class, related_remote_class)
+      through_association = remote_model_class.reflect_on_all_associations.find do |a|
+        a.name == association.through_reflection.name
+      end
+
+      through_remote_class = Forceps::Remote.const_get(through_association.klass.name.demodulize)
+
+      remote_model_class.has_many(
+        association.name,
+        through: through_association.name,
+        source: association.source_reflection.name,
+        class_name: related_remote_class.name
+      )
+    end
+
+    def reference_remote_class_in_direct_association(association, remote_model_class, related_remote_class)
+      options = association.options.dup
+      options[:class_name] = related_remote_class.name
+
+      remote_model_class.send(
+        association.macro,
+        association.name,
+        **options
+      )
     end
   end
 end

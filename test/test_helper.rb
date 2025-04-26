@@ -3,8 +3,7 @@ ENV["RAILS_ENV"] = "test"
 
 require File.expand_path("../dummy/config/environment.rb", __FILE__)
 require "rails/test_help"
-require 'database_cleaner'
-require 'database_cleaner/active_record/base'
+require 'database_cleaner/active_record'
 require 'awesome_print'
 # require 'minitest/reporters'
 require 'minitest/mock'
@@ -18,22 +17,21 @@ Dir["#{File.dirname(__FILE__)}/support/**/*.rb"].each { |f| require f }
 
 # Load fixtures from the engine
 ActiveSupport::TestCase.fixture_path = File.expand_path("../fixtures", __FILE__)
-ActiveSupport::TestCase.use_transactional_fixtures = false
+ActiveSupport::TestCase.use_instantiated_fixtures = false
 
 DatabaseCleaner::ActiveRecord.config_file_location = File.expand_path("../dummy/config/database.yml", __FILE__)
 
-DatabaseCleaner.strategy = :truncation
-DatabaseCleaner[:active_record, connection: :remote].strategy = :truncation
+DatabaseCleaner[:active_record].strategy = :truncation
+DatabaseCleaner[:active_record, db: :test]
+DatabaseCleaner[:active_record, db: :remote]
 
 Rails.application.eager_load!
 
 class ActiveSupport::TestCase
   setup do
-    DatabaseCleaner.start
-    DatabaseCleaner[:active_record, connection: :remote].start
+    DatabaseCleaner[:active_record].start
   end
   teardown do
-    DatabaseCleaner.clean
-    DatabaseCleaner[:active_record, connection: :remote].clean
+    DatabaseCleaner[:active_record].clean
   end
 end
