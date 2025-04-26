@@ -26,6 +26,6 @@ Gem::Specification.new do |s|
   s.add_development_dependency 'awesome_print', '~> 1.2.0'
   s.add_development_dependency 'database_cleaner-active_record', '~> 2.0.1'
   s.add_development_dependency 'minitest', '~> 5.1'
+  s.add_development_dependency 'pg', '~> 1.5.0'
   s.add_development_dependency 'rubocop'
-  s.add_development_dependency 'sqlite3', '~> 1.7.2'
 end

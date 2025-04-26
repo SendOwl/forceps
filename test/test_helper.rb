@@ -31,6 +31,7 @@ class ActiveSupport::TestCase
   setup do
     DatabaseCleaner[:active_record].start
   end
+
   teardown do
     DatabaseCleaner[:active_record].clean
   end
